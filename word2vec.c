@@ -20,7 +20,6 @@
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
-#include "cblas.h"
 
 #define MAX_STRING 100
 #define EXP_TABLE_SIZE 1000
@@ -444,7 +443,8 @@ void FastReadProjection()
 {
 	long long a, i, num;
 	char word[MAX_STRING];
-	char c1;
+	char c1 = '\n';
+	real *waste = (real *)malloc(semantic_num * sizeof(real));
 	
 	FILE *fi = fopen(read_proj_fast, "rb");
 
@@ -467,6 +467,8 @@ void FastReadProjection()
 
 	while(1)
 	{
+		// if(c1 != '\n')
+		// 	raise(SIGINT);
 		ReadWord(word, fi);
 
 		if (feof(fi))
@@ -482,8 +484,12 @@ void FastReadProjection()
 		i = SearchVocab(word);
 		if (i == -1)
 		{
-			printf("%s is not in the vocabulary!\n", word);
-			exit(1);
+			// printf("%s is not in the vocabulary!\n", word);
+			// raise(SIGINT);
+			fread((void *)waste, sizeof(real), semantic_num, fi);
+			fscanf(fi, "%c", &c1);
+			continue;
+			// exit(1);
 		}
 
 		if(in_list[i] != 0)
@@ -500,6 +506,10 @@ void FastReadProjection()
 
 	printf("\n");
 
+	for (a = 0; a < vocab_size * semantic_num; ++a)
+		proj[a] /= 20;
+
+	free(waste);
 	fclose(fi);
 }
 
@@ -575,54 +585,54 @@ void ReadProjection()
 	}
 
 	// min-max normalization
-	real *_min = (real *)malloc(sizeof(real) * semantic_num);
-	real *_max = (real *)malloc(sizeof(real) * semantic_num);
+	// real *_min = (real *)malloc(sizeof(real) * semantic_num);
+	// real *_max = (real *)malloc(sizeof(real) * semantic_num);
 
-	for (a = 0; a < semantic_num; ++a)
-	{
-		_min[a] = 1e8;
-		_max[a] = -1e8;
-	}
+	// for (a = 0; a < semantic_num; ++a)
+	// {
+	// 	_min[a] = 1e8;
+	// 	_max[a] = -1e8;
+	// }
 
-	for (a = 0; a < vocab_size; ++a)
-	{
-		if (in_list[a] == 0)
-			continue;
-		real *temp = &proj[a * semantic_num];
-		for (b = 0; b < semantic_num; ++b)
-		{
-			if (temp[b] < _min[b])
-				_min[b] = temp[b];
-			if (temp[b] > _max[b])
-				_max[b] = temp[b];
-		}
-	}
+	// for (a = 0; a < vocab_size; ++a)
+	// {
+	// 	if (in_list[a] == 0)
+	// 		continue;
+	// 	real *temp = &proj[a * semantic_num];
+	// 	for (b = 0; b < semantic_num; ++b)
+	// 	{
+	// 		if (temp[b] < _min[b])
+	// 			_min[b] = temp[b];
+	// 		if (temp[b] > _max[b])
+	// 			_max[b] = temp[b];
+	// 	}
+	// }
 
-	for (a = 0; a < vocab_size; ++a)
-	{
-		if (in_list[a] == 0)
-			continue;
+	// for (a = 0; a < vocab_size; ++a)
+	// {
+	// 	if (in_list[a] == 0)
+	// 		continue;
 
-		sum = 0;
-		real *temp = &proj[a * semantic_num];
+	// 	sum = 0;
+	// 	real *temp = &proj[a * semantic_num];
 
-		for (b = 0; b < semantic_num; ++b)
-		{
-			temp[b] = (temp[b] - _min[b]) / (_max[b] - _min[b]);
-			sum += temp[b];
-		}
+	// 	for (b = 0; b < semantic_num; ++b)
+	// 	{
+	// 		temp[b] = (temp[b] - _min[b]) / (_max[b] - _min[b]);
+	// 		sum += temp[b];
+	// 	}
 
-		for (b = 0; b < semantic_num; ++b)
-			temp[b] /= sum;
-	}
+	// 	for (b = 0; b < semantic_num; ++b)
+	// 		temp[b] /= sum;
+	// }
 
-	printf("\nNormalization completed\n");
+	// printf("\nNormalization completed\n");
 
-	free(_min);
-	free(_max);
+	// free(_min);
+	// free(_max);
 	fclose(fi);
 
-	fi = fopen("D:\\Users\\v-rumao\\codes\\Sememe\\word_sememe.bin", "wb");
+	fi = fopen("D:\\Users\\v-rumao\\codes\\Sememe\\word_sememe_unnorm.bin", "wb");
 
 	for (a = 0; a < vocab_size; ++a)
 	{
@@ -885,7 +895,8 @@ void TrainModel() {
 	if (output_file[0] == 0) return;
 	InitNet();
 	if (negative > 0) InitUnigramTable();
-	//if (checkpoint[0] != 0) ReadPoint();
+	if (checkpoint[0] != 0) ReadPoint();
+	// starting_alpha = alpha;
 	start = clock();
 	for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
 	for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
