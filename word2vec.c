@@ -27,6 +27,7 @@
 #define MAX_EXP 6
 #define MAX_SENTENCE_LENGTH 1000
 #define MAX_CODE_LENGTH 40
+#define MAX_LIST_NUM 200 // sample at most 200 lists for each word
 
 const int vocab_hash_size = 10000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
 const int meaning_hash_size = 10000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
@@ -43,6 +44,8 @@ struct vocab_word { // record information of a word
 	long long cn; // number of occurrence in train set
 	int *point;
 	char *word, *code, codelen;
+	int list_num; // number of lists that contain this word
+	int *in_list; // record which lists contain this word
 };
 
 real vectorDot(real *a, real *b, int l) {
@@ -60,7 +63,7 @@ char read_proj_fast[MAX_STRING];
 struct vocab_word *vocab;
 int binary = 0, cbow = 1, debug_mode = 2, window = 5, min_count = 5, num_threads = 12, min_reduce = 1;
 int *vocab_hash;
-long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 100, semantic_num = 1000;
+long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 100, semantic_num = 5814998;
 long long train_words = 0, word_count_actual = 0, iter = 5, file_size = 0, classes = 0;
 real alpha = 0.025, starting_alpha, sample = 1e-3;
 real *syn1neg, *expTable;
@@ -192,6 +195,8 @@ int AddWordToVocab(char *word) {
 	vocab[vocab_size].word = (char *)calloc(length, sizeof(char));
 	strcpy(vocab[vocab_size].word, word);
 	vocab[vocab_size].cn = 0;
+	vocab[vocab_size].list_num = 0;
+	vocab[vocab_size].in_list = NULL;
 	vocab_size++;
 	// Reallocate memory if needed
 	if (vocab_size + 2 >= vocab_max_size) {
@@ -519,28 +524,20 @@ void ReadProjection()
 	** from the file pointed by `read_semantic_proj`.
 	*/
 
-	long long a, b, i, num;
+	long long a, num, i;
 	char word[MAX_STRING];
-	char c1, c2;
-	real sum, waste;
+	char ch;
 	
+	int max_list_contain = 600000; // a word might appear in 600,000 lists
+	int *temp = (int *)malloc(max_list_contain * sizeof(int));
 	FILE *fi = fopen(read_semantic_proj, "rb");
 
 	if (fi == NULL)
 	{
-		printf("Semantic file not found\n");
+		printf("Semantic file not found!\n");
 		exit(1);
 	}
 
-	a = posix_memalign((void **)&proj, 128, (long long)vocab_size * semantic_num * sizeof(real));
-	if (proj == NULL)
-	{
-		printf("Memory allocation failed\n");
-		exit(1);
-	}
-
-	in_list = (int *)malloc(vocab_size * sizeof(int));
-	memset(in_list, 0, sizeof(int) * vocab_size);
 	num = 0;
 
 	while (1)
@@ -550,98 +547,30 @@ void ReadProjection()
 		if (feof(fi))
 			break;
 
-		++num;
+		num++;
 		if (num % 10000 == 0)
 		{
-			printf("%cHave read %lld0K word projections", 13, num / 10000);
+			printf("%cHave read %lld0K word semantics", 13, num / 10000);
 			fflush(stdout);
 		}
+
+		fscanf(fi, "%lld", &a);
+		ch = getc(fi); // the white space
+		fread((void *)temp, sizeof(int), a, fi);
+		ch = getc(fi); // the new line
 
 		i = SearchVocab(word);
 		if (i == -1)
 		{
-			for (a = 0; a < semantic_num; ++a)
-				fscanf(fi, "%f", &waste);
-			fscanf(fi, "%c%c", &c1, &c2);
 			continue;
 		}
 
-		if (in_list[i] != 0)
-		{
-			printf("in list array wrong!\n");
-			exit(1);
-		}
-
-		in_list[i] = 1;
-
-		real *temp = &proj[i * semantic_num];
-
-		for (a = 0; a < semantic_num; ++a)
-		{
-			fscanf(fi, "%f", &temp[a]);
-		}
-
-		fscanf(fi, "%c%c", &c1, &c2); // the trailing new line
+		vocab[i].list_num = a;
+		vocab[i].in_list = (int *)malloc(a * sizeof(int));
+		memcpy(vocab[i].in_list, temp, a * sizeof(int));
 	}
 
-	// min-max normalization
-	// real *_min = (real *)malloc(sizeof(real) * semantic_num);
-	// real *_max = (real *)malloc(sizeof(real) * semantic_num);
-
-	// for (a = 0; a < semantic_num; ++a)
-	// {
-	// 	_min[a] = 1e8;
-	// 	_max[a] = -1e8;
-	// }
-
-	// for (a = 0; a < vocab_size; ++a)
-	// {
-	// 	if (in_list[a] == 0)
-	// 		continue;
-	// 	real *temp = &proj[a * semantic_num];
-	// 	for (b = 0; b < semantic_num; ++b)
-	// 	{
-	// 		if (temp[b] < _min[b])
-	// 			_min[b] = temp[b];
-	// 		if (temp[b] > _max[b])
-	// 			_max[b] = temp[b];
-	// 	}
-	// }
-
-	// for (a = 0; a < vocab_size; ++a)
-	// {
-	// 	if (in_list[a] == 0)
-	// 		continue;
-
-	// 	sum = 0;
-	// 	real *temp = &proj[a * semantic_num];
-
-	// 	for (b = 0; b < semantic_num; ++b)
-	// 	{
-	// 		temp[b] = (temp[b] - _min[b]) / (_max[b] - _min[b]);
-	// 		sum += temp[b];
-	// 	}
-
-	// 	for (b = 0; b < semantic_num; ++b)
-	// 		temp[b] /= sum;
-	// }
-
-	// printf("\nNormalization completed\n");
-
-	// free(_min);
-	// free(_max);
-	fclose(fi);
-
-	fi = fopen("D:\\Users\\v-rumao\\codes\\Sememe\\word_sememe_unnorm.bin", "wb");
-
-	for (a = 0; a < vocab_size; ++a)
-	{
-		if(in_list[a] == 0)
-			continue;
-		fprintf(fi, "%s ", vocab[a].word);
-		fwrite((void *)&proj[a * semantic_num], sizeof(real), semantic_num, fi);
-		fprintf(fi, "\n");
-	}
+	free(temp);
 	fclose(fi);
 }
 
@@ -649,7 +578,11 @@ void ReadProjection()
 void InitNet() {
 	long long a, b;
 	a = posix_memalign((void **)&syn0, 128, (long long)vocab_size * layer1_size * sizeof(real));
-	if (syn0 == NULL) { printf("Memory allocation failed\n"); exit(1); }
+	if (syn0 == NULL) 
+	{
+		printf("Memory allocation failed\n");
+		exit(1);
+	}
 
 	a = posix_memalign((void **)&syn_sem, 128, (long long)semantic_num * layer1_size * sizeof(real));
 	if (syn_sem == NULL)
@@ -658,7 +591,8 @@ void InitNet() {
 		exit(1);
 	}
 	
-	if (negative > 0) {
+	if (negative > 0)
+	{
 		a = posix_memalign((void **)&syn1neg, 128, (long long)vocab_size * layer1_size * sizeof(real));
 		if (syn1neg == NULL) { printf("Memory allocation failed\n"); exit(1); }
 		for (a = 0; a < vocab_size; a++) for (b = 0; b < layer1_size; b++)
@@ -685,15 +619,16 @@ void *TrainModelThread(void *id) {
 	long long a, b, d, word, last_word, sentence_length = 0, sentence_position = 0;
 	long long p;
 	long long word_count = 0, last_word_count = 0, sen[MAX_SENTENCE_LENGTH + 1];
-	long long l1, l2, l3, l4, c, target, label, local_iter = iter;
+	long long l1, l2, c, target, label, local_iter = iter;
 	real f, g;
 	clock_t now;
 	real *neu1e = (real *)calloc(layer1_size, sizeof(real));
-	real *word_vec, *word_proj;
 	FILE *fi = fopen(train_file, "rb");
 	fseek(fi, file_size / (long long)num_threads * (long long)id, SEEK_SET);
 
 	real *input_embed = (real *)calloc(layer1_size, sizeof(real)); // this is for the input word in skip-gram
+	int local_list_num;
+	int local_list[MAX_LIST_NUM];
 
 	while (1) {
 		if (word_count - last_word_count > 10000) { // update alpha and some other params
@@ -753,33 +688,36 @@ void *TrainModelThread(void *id) {
 			last_word = sen[c];
 			if (last_word == -1) continue;
 			l1 = last_word * layer1_size;
-			l3 = last_word * semantic_num;
-			// word_vec = &syn0[last_word * layer1_size];
-			// word_proj = &proj[last_word * semantic_num];
 
-			if (in_list[last_word] > 0)
+			if (vocab[last_word].list_num > 0)
 			{
+				if (vocab[last_word].list_num > MAX_LIST_NUM)
+				{
+					// sample some lists
+					local_list_num = MAX_LIST_NUM;
+					for (p = 0; p < local_list_num; ++p)
+					{
+						next_random = next_random * (unsigned long long)25214903917 + 11;
+						local_list[p] = vocab[last_word].in_list[next_random % vocab[last_word].list_num];
+					}
+				}
+				else
+				{
+					// use all the lists
+					local_list_num = vocab[last_word].list_num;
+					memcpy(local_list, vocab[last_word].in_list, local_list_num * sizeof(int));
+				}
+
+				// calculate the input word embedding
 				for (c = 0; c < layer1_size; ++c)
 					syn0[l1 + c] = 0;
-				
-				for (p = 0; p < semantic_num; ++p)
+				for (p = 0; p < local_list_num; ++p)
 				{
-					l4 = p * layer1_size;
 					for (c = 0; c < layer1_size; ++c)
-						syn0[l1 + c] += proj[l3 + p] * syn_sem[l4 + c];
+						syn0[l1 + c] += syn_sem[local_list[p] * layer1_size + c];
 				}
-				// cblas_sgemv(CblasRowMajor,
-				// 			CblasTrans,
-				// 			semantic_num,
-				// 			layer1_size,
-				// 			1,
-				// 			syn_sem,
-				// 			layer1_size,
-				// 			&proj[l3],
-				// 			1,
-				// 			0,
-				// 			&syn0[l1],
-				// 			1);
+				for (c = 0; c < layer1_size; ++c)
+					syn0[l1 + c] /= local_list_num;
 			}
 
 			for (c = 0; c < layer1_size; ++c)
@@ -824,38 +762,22 @@ void *TrainModelThread(void *id) {
 			}
 
 			// BP
-			if (in_list[last_word] == 0) // if input word in not in the list, only updates the word embedding
+			if (vocab[last_word].list_num == 0)
 			{
+				// update the word embedding directly
 				for (c = 0; c < layer1_size; ++c)
 					syn0[l1 + c] += neu1e[c];
 			}
 
-			else // update the semantic embeddings
+			else
 			{
-				for (p = 0; p < semantic_num; ++p)
+				// update the sememe embeddings
+				for (p = 0; p < local_list_num; ++p)
 				{
-					l4 = p * layer1_size;
 					for (c = 0; c < layer1_size; ++c)
-					{
-						syn_sem[c + l4] += proj[l3 + p] * neu1e[c];
-					}
+						syn_sem[local_list[p] * layer1_size + c] += neu1e[c] / local_list_num;
 				}
-				// cblas_sger(CblasRowMajor,
-				// 		   semantic_num,
-				// 		   layer1_size,
-				// 		   1,
-				// 		   &proj[l3],
-				// 		   1,
-				// 		   neu1e,
-				// 		   1,
-				// 		   syn_sem,
-				// 		   layer1_size);
 			}
-
-			// for debugging!
-			//if (syn_sem[0] > 10 || syn_sem[0] < -10 || word_count_actual > 0)
-			//	raise(SIGINT);
-			//for (c = 0; c < layer1_size; c++) syn0[c + l1] += neu1e[c];
 		}
 		sentence_position++;
 		if (sentence_position >= sentence_length) {
@@ -903,16 +825,17 @@ void TrainModel() {
 	// TrainModelThread((void *)0);
 	for (a = 0; a < vocab_size; ++a)
 	{
-		if (in_list[a] == 0)
+		if (vocab[a].list_num == 0)
 			continue;
 		for (c = 0; c < layer1_size; ++c)
-		{
 			syn0[a * layer1_size + c] = 0;
-			for (b = 0; b < semantic_num; ++b)
-			{
-				syn0[a * layer1_size + c] += proj[a * semantic_num + b] * syn_sem[b * layer1_size + c];
-			}
+		for (b = 0; b < vocab[a].list_num; ++b)
+		{
+			for (c = 0; c < layer1_size; ++c)
+				syn0[a * layer1_size + c] += syn_sem[vocab[a].in_list[b] * layer1_size + c];
 		}
+		for (c = 0; c < layer1_size; ++c)
+			syn0[a * layer1_size + c] /= vocab[a].list_num;
 	}
 
 	fo = fopen(output_file, "w");
