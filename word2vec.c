@@ -27,7 +27,7 @@
 #define MAX_EXP 6
 #define MAX_SENTENCE_LENGTH 1000
 #define MAX_CODE_LENGTH 40
-#define MAX_LIST_NUM 200 // sample at most 200 lists for each word
+int MAX_LIST_NUM = 400; // sample at most 200 lists for each word
 
 const int vocab_hash_size = 10000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
 const int meaning_hash_size = 10000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
@@ -524,7 +524,7 @@ void ReadProjection()
 	** from the file pointed by `read_semantic_proj`.
 	*/
 
-	long long a, num, i;
+	long long a, num, i, j;
 	char word[MAX_STRING];
 	char ch;
 	
@@ -565,9 +565,25 @@ void ReadProjection()
 			continue;
 		}
 
-		vocab[i].list_num = a;
-		vocab[i].in_list = (int *)malloc(a * sizeof(int));
-		memcpy(vocab[i].in_list, temp, a * sizeof(int));
+		if (a <= MAX_LIST_NUM)
+		{
+			// use all the lists
+			vocab[i].list_num = a;
+			vocab[i].in_list = (int *)malloc(a * sizeof(int));
+			memcpy(vocab[i].in_list, temp, a * sizeof(int));
+		}
+
+		else
+		{
+			// sample `MAX_LIST_NUM' lists
+			vocab[i].list_num = MAX_LIST_NUM;
+			vocab[i].in_list = (int *)malloc(MAX_LIST_NUM * sizeof(int));
+			for (j = 0; j < MAX_LIST_NUM; ++j)
+			{
+				next_random = next_random * (unsigned long long)25214903917 + 11;
+				vocab[i].in_list[j] = temp[next_random % a];
+			}
+		}
 	}
 
 	free(temp);
@@ -628,7 +644,7 @@ void *TrainModelThread(void *id) {
 
 	real *input_embed = (real *)calloc(layer1_size, sizeof(real)); // this is for the input word in skip-gram
 	int local_list_num;
-	int local_list[MAX_LIST_NUM];
+	int *local_list;
 
 	while (1) {
 		if (word_count - last_word_count > 10000) { // update alpha and some other params
@@ -691,22 +707,8 @@ void *TrainModelThread(void *id) {
 
 			if (vocab[last_word].list_num > 0)
 			{
-				if (vocab[last_word].list_num > MAX_LIST_NUM)
-				{
-					// sample some lists
-					local_list_num = MAX_LIST_NUM;
-					for (p = 0; p < local_list_num; ++p)
-					{
-						next_random = next_random * (unsigned long long)25214903917 + 11;
-						local_list[p] = vocab[last_word].in_list[next_random % vocab[last_word].list_num];
-					}
-				}
-				else
-				{
-					// use all the lists
-					local_list_num = vocab[last_word].list_num;
-					memcpy(local_list, vocab[last_word].in_list, local_list_num * sizeof(int));
-				}
+				local_list_num = vocab[last_word].list_num;
+				local_list = vocab[last_word].in_list;
 
 				// calculate the input word embedding
 				for (c = 0; c < layer1_size; ++c)
@@ -820,6 +822,7 @@ void TrainModel() {
 	if (checkpoint[0] != 0) ReadPoint();
 	// starting_alpha = alpha;
 	start = clock();
+	printf("The maximum list number is %d\n", MAX_LIST_NUM);
 	for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
 	for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
 	// TrainModelThread((void *)0);
@@ -958,6 +961,7 @@ int main(int argc, char **argv) {
 	if ((i = ArgPos((char *)"-classes", argc, argv)) > 0) classes = atoi(argv[i + 1]);
 	if ((i = ArgPos((char *)"-semantic", argc, argv)) > 0) strcpy(read_semantic_proj, argv[i + 1]); // specify the semantic file
 	if ((i = ArgPos((char *)"-semantic-fast", argc, argv)) > 0) strcpy(read_proj_fast, argv[i + 1]); // specify the semantic file (fast version)
+	if ((i = ArgPos((char *)"-max-list-num", argc, argv)) > 0) MAX_LIST_NUM = atoi(argv[i + 1]);
 	
 	vocab = (struct vocab_word *)calloc(vocab_max_size, sizeof(struct vocab_word));
 	
