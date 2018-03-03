@@ -565,25 +565,12 @@ void ReadProjection()
 			continue;
 		}
 
-		if (a <= MAX_LIST_NUM)
-		{
-			// use all the lists
-			vocab[i].list_num = a;
-			vocab[i].in_list = (int *)malloc(a * sizeof(int));
-			memcpy(vocab[i].in_list, temp, a * sizeof(int));
-		}
+		if (a > MAX_LIST_NUM)
+			a = MAX_LIST_NUM;
 
-		else
-		{
-			// sample `MAX_LIST_NUM' lists
-			vocab[i].list_num = MAX_LIST_NUM;
-			vocab[i].in_list = (int *)malloc(MAX_LIST_NUM * sizeof(int));
-			for (j = 0; j < MAX_LIST_NUM; ++j)
-			{
-				next_random = next_random * (unsigned long long)25214903917 + 11;
-				vocab[i].in_list[j] = temp[next_random % a];
-			}
-		}
+		vocab[i].list_num = a;
+		vocab[i].in_list = (int *)malloc(a * sizeof(int));
+		memcpy(vocab[i].in_list, temp, a * sizeof(int));
 	}
 
 	free(temp);
@@ -594,7 +581,7 @@ void ReadProjection()
 void InitNet() {
 	long long a, b;
 	a = posix_memalign((void **)&syn0, 128, (long long)vocab_size * layer1_size * sizeof(real));
-	if (syn0 == NULL) 
+	if (syn0 == NULL)
 	{
 		printf("Memory allocation failed\n");
 		exit(1);
@@ -656,7 +643,7 @@ void *TrainModelThread(void *id) {
 					word_count_actual / (real)(iter * train_words + 1) * 100,
 					word_count_actual / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
 				fflush(stdout);
-				if (word_count_actual / (real)(iter * train_words + 1) * 100 > 85) break;
+				if (word_count_actual / (real)(iter * train_words + 1) * 100 > 99) break;
 			}
 			alpha = starting_alpha * (1 - word_count_actual / (real)(iter * train_words + 1));
 			if (alpha < starting_alpha * 0.0001) alpha = starting_alpha * 0.0001;
@@ -822,7 +809,7 @@ void TrainModel() {
 	if (checkpoint[0] != 0) ReadPoint();
 	// starting_alpha = alpha;
 	start = clock();
-	printf("The maximum list number is %d\n", MAX_LIST_NUM);
+	printf("\nThe maximum list number is %d\n", MAX_LIST_NUM);
 	for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
 	for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
 	// TrainModelThread((void *)0);
