@@ -59,11 +59,11 @@ real vectorDot(real *a, real *b, int l) {
 char train_file[MAX_STRING], output_file[MAX_STRING], checkpoint[MAX_STRING];
 char save_vocab_file[MAX_STRING], read_vocab_file[MAX_STRING], read_meaning_file[MAX_STRING], read_sense_file[MAX_STRING];
 char read_semantic_proj[MAX_STRING]; // from which file to read the semantic projections
-char read_proj_fast[MAX_STRING];
+
 struct vocab_word *vocab;
 int binary = 0, cbow = 1, debug_mode = 2, window = 5, min_count = 5, num_threads = 12, min_reduce = 1;
 int *vocab_hash;
-long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 100, semantic_num = 5814998;
+long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 100, semantic_num = 450000;
 long long train_words = 0, word_count_actual = 0, iter = 5, file_size = 0, classes = 0;
 real alpha = 0.025, starting_alpha, sample = 1e-3;
 real *syn1neg, *expTable;
@@ -444,80 +444,6 @@ void ReadPoint() {
 	printf("checkpoint end\n");
 }
 
-void FastReadProjection()
-{
-	long long a, i, num;
-	char word[MAX_STRING];
-	char c1 = '\n';
-	real *waste = (real *)malloc(semantic_num * sizeof(real));
-	
-	FILE *fi = fopen(read_proj_fast, "rb");
-
-	if (fi == NULL)
-	{
-		printf("Semantic file not found\n");
-		exit(1);
-	}
-
-	a = posix_memalign((void **)&proj, 128, (long long)vocab_size * semantic_num * sizeof(real));
-	if (proj == NULL)
-	{
-		printf("Memory allocation failed\n");
-		exit(1);
-	}
-
-	in_list = (int *)malloc(vocab_size * sizeof(int));
-	memset(in_list, 0, sizeof(int) * vocab_size);
-	num = 0;
-
-	while(1)
-	{
-		// if(c1 != '\n')
-		// 	raise(SIGINT);
-		ReadWord(word, fi);
-
-		if (feof(fi))
-			break;
-
-		++num;
-		if (num % 10000 == 0)
-		{
-			printf("%cHave read %lld0K word projections", 13, num / 10000);
-			fflush(stdout);
-		}
-
-		i = SearchVocab(word);
-		if (i == -1)
-		{
-			// printf("%s is not in the vocabulary!\n", word);
-			// raise(SIGINT);
-			fread((void *)waste, sizeof(real), semantic_num, fi);
-			fscanf(fi, "%c", &c1);
-			continue;
-			// exit(1);
-		}
-
-		if(in_list[i] != 0)
-		{
-			printf("%s has occurred before!\n", word);
-			exit(1);
-		}
-
-		in_list[i] = 1;
-
-		fread((void *)&proj[i * semantic_num], sizeof(real), semantic_num, fi);
-		fscanf(fi, "%c", &c1);
-	}
-
-	printf("\n");
-
-	for (a = 0; a < vocab_size * semantic_num; ++a)
-		proj[a] /= 20;
-
-	free(waste);
-	fclose(fi);
-}
-
 void ReadProjection()
 {
 	/* This function reads the semantic projections of words
@@ -564,9 +490,6 @@ void ReadProjection()
 		{
 			continue;
 		}
-
-		if (a > MAX_LIST_NUM)
-			a = MAX_LIST_NUM;
 
 		vocab[i].list_num = a;
 		vocab[i].in_list = (int *)malloc(a * sizeof(int));
@@ -789,13 +712,11 @@ void TrainModel() {
 	FILE *fo;
 	pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
 	printf("Starting training using file %s\n", train_file);
-	starting_alpha = alpha;
+
 	if (read_vocab_file[0] != 0) ReadVocab();
 	
 	if (read_semantic_proj[0] != 0)
 		ReadProjection(); // read the semantic projections
-	else if (read_proj_fast[0] != 0)
-		FastReadProjection();
 	else
 	{
 		printf("Please specify the semantic file\n");
@@ -806,13 +727,15 @@ void TrainModel() {
 	if (output_file[0] == 0) return;
 	InitNet();
 	if (negative > 0) InitUnigramTable();
+	
 	if (checkpoint[0] != 0) ReadPoint();
-	// starting_alpha = alpha;
+	starting_alpha = alpha;
+	
 	start = clock();
 	printf("\nThe maximum list number is %d\n", MAX_LIST_NUM);
 	for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
 	for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
-	// TrainModelThread((void *)0);
+
 	for (a = 0; a < vocab_size; ++a)
 	{
 		if (vocab[a].list_num == 0)
@@ -923,7 +846,6 @@ int main(int argc, char **argv) {
 	read_meaning_file[0] = 0;
 	read_sense_file[0] = 0;
 	read_semantic_proj[0] = 0; // initialize the file name to NULL
-	read_proj_fast[0] = 0;
 	checkpoint[0] = 0;
 	if ((i = ArgPos((char *)"-size", argc, argv)) > 0) layer1_size = atoi(argv[i + 1]);
 	if ((i = ArgPos((char *)"-train", argc, argv)) > 0) strcpy(train_file, argv[i + 1]);
@@ -947,7 +869,6 @@ int main(int argc, char **argv) {
 	if ((i = ArgPos((char *)"-min-count", argc, argv)) > 0) min_count = atoi(argv[i + 1]);
 	if ((i = ArgPos((char *)"-classes", argc, argv)) > 0) classes = atoi(argv[i + 1]);
 	if ((i = ArgPos((char *)"-semantic", argc, argv)) > 0) strcpy(read_semantic_proj, argv[i + 1]); // specify the semantic file
-	if ((i = ArgPos((char *)"-semantic-fast", argc, argv)) > 0) strcpy(read_proj_fast, argv[i + 1]); // specify the semantic file (fast version)
 	if ((i = ArgPos((char *)"-max-list-num", argc, argv)) > 0) MAX_LIST_NUM = atoi(argv[i + 1]);
 	
 	vocab = (struct vocab_word *)calloc(vocab_max_size, sizeof(struct vocab_word));
